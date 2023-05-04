@@ -10,6 +10,14 @@ using UnityEngine;
 namespace CachedGUI
 {
 
+public enum AutoDirtyMode
+{
+    Hovering,
+    InteractionAndMouseMove,
+    Interaction,
+    Disabled
+}
+
 public static class CachedGUI
 {
     // types
@@ -21,6 +29,8 @@ public static class CachedGUI
         public int lastUsedFrame;
         public bool dirty;
         public int lastFrameDirtiedFromMouse;
+        public bool holdingMouseDown;
+        public Vector2 lastKnownMousePos;
     }
 
     // working vars
@@ -35,19 +45,21 @@ public static class CachedGUI
 
     public static bool BeginCachedGUI(Rect rect,
         int ID,
-        bool dirtyOnMouseover = false,
+        AutoDirtyMode autoDirtyMode = AutoDirtyMode.InteractionAndMouseMove,
         bool skipAllEvents = false)
     {
         // get UI scale from GUI.matrix
         uiScale = GUI.matrix.GetColumn(0).magnitude;
 
+        CheckDirtyFromEvent(rect, ID, autoDirtyMode);
+                
         if( Event.current.type != EventType.Repaint ) // we only cache graphics
         {
             stack.Add((default, false, ID)); // CachedPart doesn't matter here
             
             if( skipAllEvents )
                 return false;
-                
+
             return true;
         }
 
@@ -77,18 +89,9 @@ public static class CachedGUI
         var part = cachedParts[index];
         bool wasDirty = part.dirty;
 
-        if( dirtyOnMouseover )
-        {
-            var mousePos = Input.mousePosition;
-            mousePos.y = Screen.height - mousePos.y;
-            if( rect.Contains(Event.current.mousePosition) || rect.Contains(GUIUtility.ScreenToGUIPoint(mousePos)) )
-            {
-                wasDirty = true;
-                part.lastFrameDirtiedFromMouse = Time.frameCount;
-            }
-            else if( part.lastFrameDirtiedFromMouse >= Time.frameCount - 2 ) // no longer mouseover
-                wasDirty = true;
-        }
+        // no longer mouseover
+        if( part.lastFrameDirtiedFromMouse >= Time.frameCount - 2 )
+            wasDirty = true;
 
         // rect size changed
         bool rectSizeChanged;
@@ -234,6 +237,101 @@ public static class CachedGUI
         var pos = Input.mousePosition;
         pos.y = Screen.height - pos.y;
         Event.current.mousePosition = GUIUtility.ScreenToGUIPoint(pos) + repaintOffset;
+    }
+
+    private static void CheckDirtyFromEvent(Rect rect, int ID, AutoDirtyMode autoDirtyMode)
+    {
+        if( autoDirtyMode == AutoDirtyMode.Disabled )
+            return;
+
+        // no longer holding mouse down (even if no longer inside the rect)
+        if( Event.current.type == EventType.MouseUp )
+        {
+            for( int i = 0; i < cachedParts.Count; i++ )
+            {
+                if( cachedParts[i].ID == ID )
+                {
+                    if( cachedParts[i].holdingMouseDown )
+                    {
+                        var part = cachedParts[i];
+                        part.holdingMouseDown = false;
+                        part.dirty = true;
+                        cachedParts[i] = part;
+                        return;
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        var mousePos = Input.mousePosition;
+        mousePos.y = Screen.height - mousePos.y;
+        if( !rect.Contains(Event.current.mousePosition) && !rect.Contains(GUIUtility.ScreenToGUIPoint(mousePos)) )
+            return;
+
+        // hover
+        if( autoDirtyMode == AutoDirtyMode.Hovering )
+        {
+            for( int i = 0; i < cachedParts.Count; i++ )
+            {
+                if( cachedParts[i].ID == ID )
+                {
+                    var part = cachedParts[i];
+                    part.lastFrameDirtiedFromMouse = Time.frameCount;
+                    part.dirty = true;
+                    cachedParts[i] = part;
+                    return;
+                }
+            }
+        }
+
+        // interaction
+        if( Event.current.type == EventType.ScrollWheel
+            || Event.current.type == EventType.MouseDown
+            || Event.current.type == EventType.MouseUp )
+        {
+            if( Event.current.type == EventType.MouseDown )
+            {
+                // set holding mouse down flag
+                for( int i = 0; i < cachedParts.Count; i++ )
+                {
+                    if( cachedParts[i].ID == ID )
+                    {
+                        var part = cachedParts[i];
+                        part.holdingMouseDown = true;
+                        cachedParts[i] = part;
+                        break;
+                    }
+                }
+            }
+
+            SetDirty(ID);
+            return;
+        }
+
+        // mouse move
+        if( autoDirtyMode == AutoDirtyMode.InteractionAndMouseMove )
+        {
+            for( int i = 0; i < cachedParts.Count; i++ )
+            {
+                if( cachedParts[i].ID == ID )
+                {
+                    if( Event.current.type == EventType.MouseMove
+                        || Event.current.type == EventType.MouseDrag
+                        || Event.current.mousePosition != cachedParts[i].lastKnownMousePos )
+                    {
+                        var part = cachedParts[i];
+                        part.lastFrameDirtiedFromMouse = Time.frameCount;
+                        part.dirty = true;
+                        part.lastKnownMousePos = Event.current.mousePosition;
+                        cachedParts[i] = part;
+                    }
+
+                    break;
+                }
+            }
+        }
     }
 
     private static void CheckDestroyOldParts()
