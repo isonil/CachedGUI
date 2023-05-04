@@ -31,6 +31,7 @@ public static class CachedGUI
         public int lastFrameDirtiedFromMouse;
         public bool holdingMouseDown;
         public Vector2 lastKnownMousePos;
+        public int timesRedrawn;
     }
 
     // working vars
@@ -39,9 +40,24 @@ public static class CachedGUI
     private static List<Vector2> mousePosStack = new List<Vector2>();
     private static Vector2 repaintOffset;
     private static float uiScale = 1f;
+    private static int nextAutoAssignedID;
+    private static bool debugMode;
 
     // properties
     public static Vector2 RepaintOffset => repaintOffset;
+    public static bool DebugMode { get => debugMode; set => debugMode = value; }
+
+    public static bool BeginCachedGUI(Rect rect,
+        ref int? ID,
+        AutoDirtyMode autoDirtyMode = AutoDirtyMode.InteractionAndMouseMove,
+        int autoDirtyEveryFrames = 120,
+        bool skipAllEvents = false)
+    {
+        if( ID == null )
+            ID = nextAutoAssignedID++;
+
+        return BeginCachedGUI(rect, ID.Value, autoDirtyMode, autoDirtyEveryFrames, skipAllEvents);
+    }
 
     public static bool BeginCachedGUI(Rect rect,
         int ID,
@@ -130,6 +146,9 @@ public static class CachedGUI
 
         if( rectSizeChanged || wasDirty )
         {
+            part.timesRedrawn++;
+            cachedParts[index] = part;
+
             // redraw
             repaintOffset = -rect.position - GUIUtility.GUIToScreenPoint(Vector2.zero);
             BeginRenderTexture(part.renderTexture);
@@ -144,8 +163,12 @@ public static class CachedGUI
         }
     }
     
+    private static readonly GUIStyle DebugRectStyle = new GUIStyle { normal = new GUIStyleState { background = Texture2D.whiteTexture } };
     public static void EndCachedGUI(float alpha = 1f)
     {
+        if( debugMode )
+            alpha *= (Mathf.Sin(Time.unscaledTime * 8f) + 1f) / 2f * 0.7f + 0.2f;
+
         var elem = stack[stack.Count - 1];
         stack.RemoveAt(stack.Count - 1);
 
@@ -166,6 +189,14 @@ public static class CachedGUI
                 GUI.color = Color.white;
             }
 
+            if( debugMode )
+            {
+                var oldCol = GUI.backgroundColor;
+                GUI.backgroundColor = Color.red;
+                GUI.Box(part.rect, GUIContent.none, DebugRectStyle);
+                GUI.backgroundColor = oldCol;
+            }
+
             // draw result
             var rect = new Rect(part.rect.x,
                 part.rect.y,
@@ -179,6 +210,9 @@ public static class CachedGUI
             
             if( alpha < 1f )
                 GUI.color = Color.white;
+
+            if( debugMode )
+                GUI.Label(part.rect, "ID: " + part.ID + " Redrawn: " + part.timesRedrawn);
         }
 
         // in case someone doesn't call OnGUI() each frame
@@ -362,7 +396,7 @@ public static class CachedGUI
         if( Event.current.type == EventType.Repaint )
         {
             RenderTexture.active = renderTexture;
-            GUI.matrix = Matrix4x4.TRS(new Vector3(repaintOffset.x, repaintOffset.y, 0f) * uiScale, Quaternion.identity, new Vector3(uiScale, uiScale, 1)); // for some reason setting RenderTexture resets GUI.matrix, so we need to reapply it
+            GUI.matrix = Matrix4x4.TRS(new Vector3(repaintOffset.x, repaintOffset.y, 0f) * uiScale, Quaternion.identity, new Vector3(uiScale, uiScale, 1));
             mousePosStack.Add(Event.current.mousePosition);
             Event.current.mousePosition += repaintOffset; // compensate for new GUI.matrix, so the values are the same as before
             GL.Clear(false, true, new Color(0f, 0f, 0f, 0f));
@@ -374,7 +408,7 @@ public static class CachedGUI
         if( Event.current.type == EventType.Repaint )
         {
             RenderTexture.active = null;
-            GUI.matrix = Matrix4x4.TRS(new Vector3(repaintOffset.x, repaintOffset.y, 0f) * uiScale, Quaternion.identity, new Vector3(uiScale, uiScale, 1)); // for some reason setting RenderTexture resets GUI.matrix, so we need to reapply it
+            GUI.matrix = Matrix4x4.TRS(new Vector3(repaintOffset.x, repaintOffset.y, 0f) * uiScale, Quaternion.identity, new Vector3(uiScale, uiScale, 1));
             if( mousePosStack.Count != 0 )
             {
                 Event.current.mousePosition = mousePosStack[mousePosStack.Count - 1];
