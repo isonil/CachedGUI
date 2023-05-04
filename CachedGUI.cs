@@ -46,6 +46,7 @@ public static class CachedGUI
     public static bool BeginCachedGUI(Rect rect,
         int ID,
         AutoDirtyMode autoDirtyMode = AutoDirtyMode.InteractionAndMouseMove,
+        int autoDirtyEveryFrames = 120,
         bool skipAllEvents = false)
     {
         // get UI scale from GUI.matrix
@@ -92,6 +93,12 @@ public static class CachedGUI
         // no longer mouseover
         if( part.lastFrameDirtiedFromMouse >= Time.frameCount - 2 )
             wasDirty = true;
+        else if( autoDirtyEveryFrames >= 1
+            && (Time.frameCount + ID % 987) % autoDirtyEveryFrames == 0 )
+        {
+            // dirty from time to time to avoid stale content
+            wasDirty = true;
+        }
 
         // rect size changed
         bool rectSizeChanged;
@@ -319,13 +326,14 @@ public static class CachedGUI
                 {
                     if( Event.current.type == EventType.MouseMove
                         || Event.current.type == EventType.MouseDrag
-                        || Event.current.mousePosition != cachedParts[i].lastKnownMousePos )
+                        || ((Event.current.type == EventType.Repaint || Event.current.type == EventType.Layout) && Event.current.mousePosition != cachedParts[i].lastKnownMousePos) )
                     {
                         var part = cachedParts[i];
                         part.lastFrameDirtiedFromMouse = Time.frameCount;
                         part.dirty = true;
                         part.lastKnownMousePos = Event.current.mousePosition;
                         cachedParts[i] = part;
+                        return;
                     }
 
                     break;
