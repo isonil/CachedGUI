@@ -28,3 +28,14 @@ public static bool BeginCachedGUI(Rect rect, // this is the cached area, it shou
    bool dirtyOnMouseover = false, // if true, the group will be repainted whenever the mouse is hovering over the cached area, this basically turns off the entire caching as long as the mouse is hovering over the area. Not great for performance, but nice if you don't want to handle dirtying yourself.
    bool warnAboutSizeChange = true) // if true, will warn you if the same cached group has changed size, since it involves destroying and recreating the render texture
 ```
+
+To set currently drawn cached part as dirty (e.g. in MouseMove event on button hover), use:
+```C#
+CachedGUI.CachedGUI.SetCurrentDirty();
+```
+
+If you plan on using GUI.BeginGroup() and alike inside cached groups, then you have to call
+```C#
+CachedGUI.CachedGUI.SetCorrectMousePosition();
+```
+after every such call. Either that, or you have to handle mouse position manually by using CachedGUI.CachedGUI.RepaintOffset.
