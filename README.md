@@ -39,3 +39,8 @@ If you plan on using GUI.BeginGroup() and alike inside cached groups, then you h
 CachedGUI.CachedGUI.SetCorrectMousePosition();
 ```
 after every such call. Either that, or you have to handle mouse position manually by using CachedGUI.CachedGUI.RepaintOffset.
+
+You can turn on debug mode and visualize all cached groups like so:
+```C#
+CachedGUI.CachedGUI.DebugMode = true;
+```
