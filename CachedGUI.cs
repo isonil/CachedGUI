@@ -315,6 +315,14 @@ public static class CachedGUI
             SetDirty(ID);
         }
     }
+    
+    public static void DirtyCurrentIfChanged(object obj, string name)
+    {
+        if( stack.Count == 0 )
+            return;
+
+        DirtyIfChanged(stack[stack.Count - 1].Item3, obj, name);
+    }
 
     // to avoid boxing
     public static void DirtyIfChanged(int ID, int value, string name)
@@ -333,6 +341,14 @@ public static class CachedGUI
         }
     }
 
+    public static void DirtyCurrentIfChanged(int value, string name)
+    {
+        if( stack.Count == 0 )
+            return;
+
+        DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
+    }
+
     // to avoid boxing
     public static void DirtyIfChanged(int ID, bool value, string name)
     {
@@ -348,6 +364,14 @@ public static class CachedGUI
             dirtyIfChanged_bool.Add((ID, name), (value, Time.frameCount));
             SetDirty(ID);
         }
+    }
+
+    public static void DirtyCurrentIfChanged(bool value, string name)
+    {
+        if( stack.Count == 0 )
+            return;
+
+        DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
     }
 
     private static void CheckDirtyFromEvent(Rect rect, int ID, AutoDirtyMode autoDirtyMode)
