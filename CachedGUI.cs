@@ -4,6 +4,7 @@
    Piotr 'ison' Walczak
 */
 
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -42,6 +43,9 @@ public static class CachedGUI
     private static float uiScale = 1f;
     private static int nextAutoAssignedID;
     private static bool debugMode;
+    private static Dictionary<(int, string), (object, int)> dirtyIfChanged = new Dictionary<(int, string), (object, int)>();
+    private static Dictionary<(int, string), (int, int)> dirtyIfChanged_int = new Dictionary<(int, string), (int, int)>();
+    private static Dictionary<(int, string), (bool, int)> dirtyIfChanged_bool = new Dictionary<(int, string), (bool, int)>();
 
     // properties
     public static Vector2 RepaintOffset => repaintOffset;
@@ -219,7 +223,10 @@ public static class CachedGUI
 
         // in case someone doesn't call OnGUI() each frame
         if( Time.frameCount % 3 == 1 )
+        {
             CheckDestroyOldParts();
+            CheckRemoveOldDirtyIfChanged();
+        }
     }
 
     public static void SetDirty(int ID)
@@ -271,6 +278,7 @@ public static class CachedGUI
         }
 
         CheckDestroyOldParts();
+        CheckRemoveOldDirtyIfChanged();
     }
 
     public static void DirtyCurrent()
@@ -290,6 +298,56 @@ public static class CachedGUI
         var pos = Input.mousePosition;
         pos.y = Screen.height - pos.y;
         Event.current.mousePosition = GUIUtility.ScreenToGUIPoint(pos) + repaintOffset;
+    }
+
+    public static void DirtyIfChanged(int ID, object obj, string name)
+    {
+        if( dirtyIfChanged.TryGetValue((ID, name), out var prev) )
+        {
+            if( !object.Equals(obj, prev.Item1) )
+                SetDirty(ID);
+                
+            dirtyIfChanged[(ID, name)] = (obj, Time.frameCount);
+        }
+        else
+        {
+            dirtyIfChanged.Add((ID, name), (obj, Time.frameCount));
+            SetDirty(ID);
+        }
+    }
+
+    // to avoid boxing
+    public static void DirtyIfChanged(int ID, int value, string name)
+    {
+        if( dirtyIfChanged_int.TryGetValue((ID, name), out var prev) )
+        {
+            if( value != prev.Item1 )
+                SetDirty(ID);
+                
+            dirtyIfChanged_int[(ID, name)] = (value, Time.frameCount);
+        }
+        else
+        {
+            dirtyIfChanged_int.Add((ID, name), (value, Time.frameCount));
+            SetDirty(ID);
+        }
+    }
+
+    // to avoid boxing
+    public static void DirtyIfChanged(int ID, bool value, string name)
+    {
+        if( dirtyIfChanged_bool.TryGetValue((ID, name), out var prev) )
+        {
+            if( value != prev.Item1 )
+                SetDirty(ID);
+                
+            dirtyIfChanged_bool[(ID, name)] = (value, Time.frameCount);
+        }
+        else
+        {
+            dirtyIfChanged_bool.Add((ID, name), (value, Time.frameCount));
+            SetDirty(ID);
+        }
     }
 
     private static void CheckDirtyFromEvent(Rect rect, int ID, AutoDirtyMode autoDirtyMode)
@@ -400,6 +458,54 @@ public static class CachedGUI
         }
     }
     
+    private static List<(int, string)> tmpToRemove = new List<(int, string)>();
+    private static void CheckRemoveOldDirtyIfChanged()
+    {
+        tmpToRemove.Clear();
+
+        foreach( var elem in dirtyIfChanged )
+        {
+            int lastUsedFrame = elem.Value.Item2;
+
+            if( Time.frameCount - lastUsedFrame > 60 )
+                tmpToRemove.Add(elem.Key);
+        }
+        for( int i = 0; i < tmpToRemove.Count; i++ )
+        {
+            dirtyIfChanged.Remove(tmpToRemove[i]);
+        }
+
+        tmpToRemove.Clear();
+        
+        foreach( var elem in dirtyIfChanged_int )
+        {
+            int lastUsedFrame = elem.Value.Item2;
+
+            if( Time.frameCount - lastUsedFrame > 60 )
+                tmpToRemove.Add(elem.Key);
+        }
+        for( int i = 0; i < tmpToRemove.Count; i++ )
+        {
+            dirtyIfChanged_int.Remove(tmpToRemove[i]);
+        }
+
+        tmpToRemove.Clear();
+        
+        foreach( var elem in dirtyIfChanged_bool )
+        {
+            int lastUsedFrame = elem.Value.Item2;
+
+            if( Time.frameCount - lastUsedFrame > 60 )
+                tmpToRemove.Add(elem.Key);
+        }
+        for( int i = 0; i < tmpToRemove.Count; i++ )
+        {
+            dirtyIfChanged_bool.Remove(tmpToRemove[i]);
+        }
+
+        tmpToRemove.Clear();
+    }
+
     private static void BeginRenderTexture(RenderTexture renderTexture)
     {
         if( renderTexture == null )
