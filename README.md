@@ -31,7 +31,7 @@ public static bool BeginCachedGUI(Rect rect, // this is the cached area, it shou
 
 To set currently drawn cached part as dirty (e.g. in MouseMove event on button hover), use:
 ```C#
-CachedGUI.CachedGUI.SetCurrentDirty();
+CachedGUI.CachedGUI.DirtyCurrent();
 ```
 
 If you plan on using GUI.BeginGroup() and alike inside cached groups, then you have to call
