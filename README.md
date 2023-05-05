@@ -25,7 +25,7 @@ Arguments explained:
 public static bool BeginCachedGUI(Rect rect, // this is the cached area, it should be a bounding box around all the contents you want to cache for this group
     int ID, // ID of the cached group, for setting the dirty flag. You can also use the "ref int" overload to get the ID assigned automatically
     AutoDirtyMode autoDirtyMode = AutoDirtyMode.InteractionAndMouseMove, // Hovering - the group will be repainted whenever the mouse is hovering over the cached area, this basically turns off the entire caching as long as the mouse is hovering over the area. Not great for performance, but nice if you don't want to handle dirtying yourself. InteractionAndMouseMove - repaint on mouse move or any interaction (mouse clicks). Interaction - repaint on interactions. Disabled - no auto-dirtying, assumes you'll handle it yourself
-    int autoDirtyEveryFrames = 120, // automatically set as dirty every X frames to avoid stale content if you forgot to dirty somewhere, pass -1 to disable
+    int autoDirtyEveryFrames = 120, // automatically set as dirty every X frames to avoid stale content if you forgot to dirty somewhere, pass -1 to disable. If you don't want to handle dirtying manually (e.g. there are too many factors affecting the contents of the cached group), then it may be a good idea to just not set it as dirty and instead pass autoDirtyEveryFrames=5 here. This way the contents will refresh automatically, but at a lower framerate
     bool skipAllEvents = false) // a tiny handy optimization, if true, then all other events except for Repaint will be discarded (only useful if you don't have any interactive elements inside the cached group)
 ```
 
