@@ -46,6 +46,7 @@ public static class CachedGUI
     private static Dictionary<(int, string), (object, int)> dirtyIfChanged = new Dictionary<(int, string), (object, int)>();
     private static Dictionary<(int, string), (int, int)> dirtyIfChanged_int = new Dictionary<(int, string), (int, int)>();
     private static Dictionary<(int, string), (bool, int)> dirtyIfChanged_bool = new Dictionary<(int, string), (bool, int)>();
+    private static int autoCheckDestroyOldPartsFrame;
 
     // properties
     public static Vector2 RepaintOffset => repaintOffset;
@@ -222,8 +223,9 @@ public static class CachedGUI
         }
 
         // in case someone doesn't call OnGUI() each frame
-        if( Time.frameCount % 3 == 1 )
+        if( Time.frameCount % 3 == 1 && autoCheckDestroyOldPartsFrame != Time.frameCount )
         {
+            autoCheckDestroyOldPartsFrame = Time.frameCount;
             CheckDestroyOldParts();
             CheckRemoveOldDirtyIfChanged();
         }
