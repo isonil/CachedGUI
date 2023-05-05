@@ -45,6 +45,8 @@ public static class CachedGUI
 
     // properties
     public static Vector2 RepaintOffset => repaintOffset;
+    public static bool InAnyGroup => stack.Count != 0;
+    public static int? CurrentGroupID => InAnyGroup ? stack[stack.Count - 1].Item3 : null;
     public static bool DebugMode { get => debugMode; set => debugMode = value; }
 
     public static bool BeginCachedGUI(Rect rect,
@@ -231,6 +233,16 @@ public static class CachedGUI
                 cachedParts[i] = part;
                 return;
             }
+        }
+    }
+
+    public static void SetAllDirty()
+    {
+        for( int i = 0; i < cachedParts.Count; i++ )
+        {
+            var part = cachedParts[i];
+            part.dirty = true;
+            cachedParts[i] = part;
         }
     }
 
