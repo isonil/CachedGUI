@@ -46,7 +46,7 @@ public static class CachedGUI
     // properties
     public static Vector2 RepaintOffset => repaintOffset;
     public static bool InAnyGroup => stack.Count != 0;
-    public static int? CurrentGroupID => InAnyGroup ? stack[stack.Count - 1].Item3 : null;
+    public static int? CurrentGroupID => InAnyGroup ? (int?)stack[stack.Count - 1].Item3 : null;
     public static bool DebugMode { get => debugMode; set => debugMode = value; }
 
     public static bool BeginCachedGUI(Rect rect,
