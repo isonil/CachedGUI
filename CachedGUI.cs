@@ -407,7 +407,7 @@ public static class CachedGUI
         if( autoDirtyMode == AutoDirtyMode.Disabled )
             return;
 
-        // no longer holding mouse down (even if no longer inside the rect)
+        // if held mouse button inside and no longer holding (even if no longer inside the rect)
         if( Event.current.type == EventType.MouseUp )
         {
             for( int i = 0; i < cachedParts.Count; i++ )
@@ -418,6 +418,26 @@ public static class CachedGUI
                     {
                         var part = cachedParts[i];
                         part.holdingMouseDown = false;
+                        part.dirty = true;
+                        cachedParts[i] = part;
+                        return;
+                    }
+
+                    break;
+                }
+            }
+        }
+        // if held mouse button inside and there's a mouse drag event (even if no longer inside the rect)
+        if( (autoDirtyMode == AutoDirtyMode.InteractionAndMouseMove || autoDirtyMode == AutoDirtyMode.Hovering)
+            && Event.current.type == EventType.MouseDrag )
+        {
+            for( int i = 0; i < cachedParts.Count; i++ )
+            {
+                if( cachedParts[i].ID == ID )
+                {
+                    if( cachedParts[i].holdingMouseDown )
+                    {
+                        var part = cachedParts[i];
                         part.dirty = true;
                         cachedParts[i] = part;
                         return;
