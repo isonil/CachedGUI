@@ -45,6 +45,7 @@ public static class CachedGUI
     private static bool debugMode;
     private static Dictionary<(int, string), (object, int)> dirtyIfChanged = new Dictionary<(int, string), (object, int)>();
     private static Dictionary<(int, string), (int, int)> dirtyIfChanged_int = new Dictionary<(int, string), (int, int)>();
+    private static Dictionary<(int, string), (float, int)> dirtyIfChanged_float = new Dictionary<(int, string), (float, int)>();
     private static Dictionary<(int, string), (bool, int)> dirtyIfChanged_bool = new Dictionary<(int, string), (bool, int)>();
     private static int autoCheckDestroyOldPartsFrame;
 
@@ -376,6 +377,31 @@ public static class CachedGUI
         DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
     }
 
+    // to avoid boxing
+    public static void DirtyIfChanged(int ID, float value, string name)
+    {
+        if( dirtyIfChanged_float.TryGetValue((ID, name), out var prev) )
+        {
+            if( value != prev.Item1 )
+                SetDirty(ID);
+                
+            dirtyIfChanged_float[(ID, name)] = (value, Time.frameCount);
+        }
+        else
+        {
+            dirtyIfChanged_float.Add((ID, name), (value, Time.frameCount));
+            SetDirty(ID);
+        }
+    }
+
+    public static void DirtyCurrentIfChanged(float value, string name)
+    {
+        if( stack.Count == 0 )
+            return;
+
+        DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
+    }
+
     private static void CheckDirtyFromEvent(Rect rect, int ID, AutoDirtyMode autoDirtyMode)
     {
         if( autoDirtyMode == AutoDirtyMode.Disabled )
@@ -513,6 +539,20 @@ public static class CachedGUI
         for( int i = 0; i < tmpToRemove.Count; i++ )
         {
             dirtyIfChanged_int.Remove(tmpToRemove[i]);
+        }
+
+        tmpToRemove.Clear();
+
+        foreach( var elem in dirtyIfChanged_float )
+        {
+            int lastUsedFrame = elem.Value.Item2;
+
+            if( Time.frameCount - lastUsedFrame > 60 )
+                tmpToRemove.Add(elem.Key);
+        }
+        for( int i = 0; i < tmpToRemove.Count; i++ )
+        {
+            dirtyIfChanged_float.Remove(tmpToRemove[i]);
         }
 
         tmpToRemove.Clear();
