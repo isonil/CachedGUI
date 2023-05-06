@@ -452,7 +452,8 @@ public static class CachedGUI
         // interaction
         if( Event.current.type == EventType.ScrollWheel
             || Event.current.type == EventType.MouseDown
-            || Event.current.type == EventType.MouseUp )
+            || Event.current.type == EventType.MouseUp
+            || ((Event.current.type == EventType.KeyDown || Event.current.type == EventType.KeyUp) && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.Escape)) )
         {
             if( Event.current.type == EventType.MouseDown )
             {
