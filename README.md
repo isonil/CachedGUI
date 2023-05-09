@@ -45,7 +45,7 @@ You can turn on debug mode and visualize all cached groups like so:
 CachedGUI.CachedGUI.DebugMode = true;
 ```
 
-There's a handy shortcut if you want to dirty a group based on whether some variable has changed (e.g. contents of some string):
+There's a handy shortcut if you want to dirty a group based on whether some variable has changed (e.g. contents of some string) (ideally call it just before BeginCachedGUI()):
 ```C#
 CachedGUI.CachedGUI.DirtyIfChanged(1, someVariable, "Name"); // it will be stored in a Dictionary and compared against the old value
 ```
