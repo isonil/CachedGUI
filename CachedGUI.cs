@@ -62,6 +62,7 @@ public static class CachedGUI
     private static List<Vector2> mousePosStack = new List<Vector2>();
     private static Vector2 repaintOffset;
     private static float uiScale = 1f; // last remembered UI scale
+    private static float clearIfUIScaleChanges = 1f;
     private static int nextAutoAssignedID = 1;
     private static int autoCheckDestroyOldRegionsFrame;
     private static bool debugMode;
@@ -333,6 +334,19 @@ public static class CachedGUI
 
         CheckDestroyOldRegions();
         CheckRemoveOldDirtyIfChanged();
+
+        // clear if UI scale changed
+        if( Event.current.type == EventType.Repaint )
+        {
+            // get current UI scale from GUI.matrix
+            float scale = GUI.matrix.GetColumn(0).magnitude;
+
+            if( scale != clearIfUIScaleChanges )
+            {
+                clearIfUIScaleChanges = scale;
+                Clear();
+            }
+        }
     }
 
     /// <summary>
