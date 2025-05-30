@@ -4,6 +4,7 @@
    Piotr 'ison' Walczak
 */
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -11,184 +12,219 @@ using UnityEngine;
 namespace CachedGUI
 {
 
+/// <summary>
+/// Determines when a cached GUI region should be automatically marked as dirty and redrawn.
+/// </summary>
 public enum AutoDirtyMode
 {
-    Hovering,
-    InteractionAndMouseMove,
+    Disabled, // for when there are no interactable elements
     Interaction,
-    Disabled
+    InteractionAndMouseMove,
+    Hovering // for when there are hover animations
+}
+
+/// <summary>
+/// Determines which non-repaint events can enter the region.
+/// </summary>
+public enum EventsFilter
+{
+    None, // for when there are no interactable elements
+    AllExceptLayoutAndMouseMove,
+    AllExceptLayout,
+    All // for when you care about Layout or want to do the filtering yourself
 }
 
 public static class CachedGUI
 {
     // types
-    private struct CachedPart
+    private struct CachedRegion
     {
+        // identity
         public RenderTexture renderTexture;
         public Rect rect;
         public int ID;
-        public int lastUsedFrame;
+
+        // dirtying
         public bool dirty;
+        public int lastUsedFrame;
         public int lastFrameDirtiedFromMouse;
         public bool holdingMouseDown;
         public Vector2 lastKnownMousePos;
+
+        // debug
         public int timesRedrawn;
+        public int timesNonRepaintEventEntered;
     }
 
     // working vars
-    private static List<CachedPart> cachedParts = new List<CachedPart>();
-    private static List<(CachedPart, bool, int)> stack = new List<(CachedPart, bool, int)>();
+    private static List<CachedRegion> cachedRegions = new List<CachedRegion>();
+    private static List<(CachedRegion, bool, int)> currentStack = new List<(CachedRegion, bool, int)>();
     private static List<Vector2> mousePosStack = new List<Vector2>();
     private static Vector2 repaintOffset;
-    private static float uiScale = 1f;
-    private static int nextAutoAssignedID;
+    private static float uiScale = 1f; // last remembered UI scale
+    private static int nextAutoAssignedID = 1;
+    private static int autoCheckDestroyOldRegionsFrame;
     private static bool debugMode;
+
+    // working vars - auto-dirtying
     private static Dictionary<(int, string), (object, int)> dirtyIfChanged = new Dictionary<(int, string), (object, int)>();
     private static Dictionary<(int, string), (int, int)> dirtyIfChanged_int = new Dictionary<(int, string), (int, int)>();
     private static Dictionary<(int, string), (float, int)> dirtyIfChanged_float = new Dictionary<(int, string), (float, int)>();
     private static Dictionary<(int, string), (bool, int)> dirtyIfChanged_bool = new Dictionary<(int, string), (bool, int)>();
-    private static int autoCheckDestroyOldPartsFrame;
 
     // properties
     public static Vector2 RepaintOffset => repaintOffset;
-    public static bool InAnyGroup => stack.Count != 0;
-    public static int? CurrentGroupID => InAnyGroup ? (int?)stack[stack.Count - 1].Item3 : null;
+    public static bool DoingAnyRegionNow => currentStack.Count != 0;
+    public static int? CurrentRegionID => DoingAnyRegionNow ? currentStack[currentStack.Count - 1].Item3 : null;
     public static bool DebugMode { get => debugMode; set => debugMode = value; }
 
-    public static bool BeginCachedGUI(Rect rect,
-        ref int? ID,
+    /// <summary>
+    /// Begin new cached GUI region using sequential auto-assigned ID.
+    /// </summary>
+    public static bool Begin(Rect rect,
+        ref int ID,
         AutoDirtyMode autoDirtyMode = AutoDirtyMode.InteractionAndMouseMove,
-        int autoDirtyEveryFrames = 120,
-        bool skipAllEvents = false)
+        EventsFilter eventsFilter = EventsFilter.AllExceptLayout,
+        int autoDirtyEveryFrames = 150)
     {
-        if( ID == null )
+        // first time - assign ID
+        if( ID == 0 )
             ID = nextAutoAssignedID++;
 
-        return BeginCachedGUI(rect, ID.Value, autoDirtyMode, autoDirtyEveryFrames, skipAllEvents);
+        return Begin(rect, ID, autoDirtyMode, eventsFilter, autoDirtyEveryFrames);
     }
 
-    public static bool BeginCachedGUI(Rect rect,
+    /// <summary>
+    /// Begin new cached GUI region using specific ID.
+    /// </summary>
+    public static bool Begin(Rect rect,
         int ID,
         AutoDirtyMode autoDirtyMode = AutoDirtyMode.InteractionAndMouseMove,
-        int autoDirtyEveryFrames = 120,
-        bool skipAllEvents = false)
+        EventsFilter eventsFilter = EventsFilter.AllExceptLayout,
+        int autoDirtyEveryFrames = 150)
     {
-        // get UI scale from GUI.matrix
+        // get current UI scale from GUI.matrix
         uiScale = GUI.matrix.GetColumn(0).magnitude;
 
-        CheckDirtyFromEvent(rect, ID, autoDirtyMode);
-                
-        if( Event.current.type != EventType.Repaint ) // we only cache graphics
+        // see if it's an event that dirties the region
+        CheckAutoDirtyFromEvent(rect, ID, autoDirtyMode);
+        
+        if( Event.current.type != EventType.Repaint )
         {
-            stack.Add((default, false, ID)); // CachedPart doesn't matter here
+            // we still need to add it, so End can remove it
+            currentStack.Add((default, false, ID)); // CachedRegion doesn't matter here
             
-            if( skipAllEvents )
+            // determine if we want to skip this event
+            if( eventsFilter == EventsFilter.None )
+                return false; // skip
+            else if( eventsFilter == EventsFilter.AllExceptLayoutAndMouseMove && (Event.current.type == EventType.Layout || Event.current.type == EventType.MouseMove || Event.current.type == EventType.MouseDrag) )
+                return false; // skip
+            else if( eventsFilter == EventsFilter.AllExceptLayout && Event.current.type == EventType.Layout )
+                return false; // skip
+            
+            // update count for debug purposes
+            int index = FindOrCreateRegion(rect, ID, canCreate: false);
+            if( index != -1 )
+            {
+                var region = cachedRegions[index];
+                region.timesNonRepaintEventEntered++;
+                cachedRegions[index] = region;
+            }
+
+            return true; // enter GUI
+        }
+        else
+        {
+            // determine if we want to repaint
+
+            // find existing entry
+            int index = FindOrCreateRegion(rect, ID);
+            var region = cachedRegions[index];
+            bool wasDirty = region.dirty;
+
+            // no longer mouseover
+            if( region.lastFrameDirtiedFromMouse >= Time.frameCount - 2 )
+                wasDirty = true;
+            else if( autoDirtyEveryFrames >= 1
+                && (Time.frameCount + Math.Abs(ID % 987)) % autoDirtyEveryFrames == 0 )
+            {
+                // dirty from time to time to avoid stale content
+                wasDirty = true;
+            }
+
+            // rect size changed
+            bool rectSizeChanged;
+            if( rect.size != region.rect.size )
+            {
+                rectSizeChanged = true;
+                int newNeededWidth = Mathf.CeilToInt(rect.width * uiScale);
+                int newNeededHeight = Mathf.CeilToInt(rect.height * uiScale);
+                int oldWidth = region.renderTexture.width;
+                int oldHeight = region.renderTexture.height;
+
+                // we need a bigger texture
+                if( oldWidth < newNeededWidth || oldHeight < newNeededHeight )
+                {
+                    RenderTexture.Destroy(region.renderTexture);
+
+                    // always enlarge by at least 10px
+                    region.renderTexture = new RenderTexture(oldWidth < newNeededWidth ? Mathf.Max(newNeededWidth, oldWidth + 10) : oldWidth,
+                        oldHeight < newNeededHeight ? Mathf.Max(newNeededHeight, oldHeight + 10) : oldHeight, 0);
+                }
+            }
+            else
+                rectSizeChanged = false;
+
+            region.lastUsedFrame = Time.frameCount;
+            region.rect = rect;
+            region.dirty = false;
+            cachedRegions[index] = region;
+
+            if( rectSizeChanged || wasDirty )
+            {
+                region.timesRedrawn++;
+                cachedRegions[index] = region;
+
+                // redraw
+                repaintOffset = -rect.position - GUIUtility.GUIToScreenPoint(Vector2.zero);
+                BeginRenderTexture(region.renderTexture);
+                currentStack.Add((region, true, region.ID));
+                return true;
+            }
+            else
+            {
+                // we'll just use cache, no need to enter this GUI region
+                currentStack.Add((region, false, region.ID));
                 return false;
-
-            return true;
-        }
-
-        // find existing entry
-        int index = -1;
-        for( int i = 0; i < cachedParts.Count; i++ )
-        {
-            if( cachedParts[i].ID == ID )
-            {
-                index = i;
-                break;
             }
-        }
-        if( index == -1 )
-        {
-            // add new entry
-            cachedParts.Add(new CachedPart { rect = rect,
-                lastUsedFrame = Time.frameCount,
-                ID = ID,
-                renderTexture = new RenderTexture(Mathf.CeilToInt(rect.width * uiScale), Mathf.CeilToInt(rect.height * uiScale), 0),
-                dirty = true,
-                lastFrameDirtiedFromMouse = -1 });
-
-            index = cachedParts.Count - 1;
-        }
-
-        var part = cachedParts[index];
-        bool wasDirty = part.dirty;
-
-        // no longer mouseover
-        if( part.lastFrameDirtiedFromMouse >= Time.frameCount - 2 )
-            wasDirty = true;
-        else if( autoDirtyEveryFrames >= 1
-            && (Time.frameCount + ID % 987) % autoDirtyEveryFrames == 0 )
-        {
-            // dirty from time to time to avoid stale content
-            wasDirty = true;
-        }
-
-        // rect size changed
-        bool rectSizeChanged;
-        if( rect.size != part.rect.size )
-        {
-            rectSizeChanged = true;
-            int newNeededWidth = Mathf.CeilToInt(rect.width * uiScale);
-            int newNeededHeight = Mathf.CeilToInt(rect.height * uiScale);
-            int oldWidth = part.renderTexture.width;
-            int oldHeight = part.renderTexture.height;
-
-            // we need a bigger texture
-            if( oldWidth < newNeededWidth || oldHeight < newNeededHeight )
-            {
-                RenderTexture.Destroy(part.renderTexture);
-
-                // always enlarge by at least 10px
-                part.renderTexture = new RenderTexture(oldWidth < newNeededWidth ? Mathf.Max(newNeededWidth, oldWidth + 10) : oldWidth,
-                    oldHeight < newNeededHeight ? Mathf.Max(newNeededHeight, oldHeight + 10) : oldHeight, 0);
-            }
-        }
-        else
-            rectSizeChanged = false;
-
-        part.lastUsedFrame = Time.frameCount;
-        part.rect = rect;
-        part.dirty = false;
-        cachedParts[index] = part;
-
-        if( rectSizeChanged || wasDirty )
-        {
-            part.timesRedrawn++;
-            cachedParts[index] = part;
-
-            // redraw
-            repaintOffset = -rect.position - GUIUtility.GUIToScreenPoint(Vector2.zero);
-            BeginRenderTexture(part.renderTexture);
-            stack.Add((part, true, part.ID));
-            return true;
-        }
-        else
-        {
-            // we'll just use cache
-            stack.Add((part, false, part.ID));
-            return false;
         }
     }
     
     private static readonly GUIStyle DebugRectStyle = new GUIStyle { normal = new GUIStyleState { background = Texture2D.whiteTexture } };
-    public static void EndCachedGUI(float alpha = 1f)
+    public static void End(float alpha = 1f)
     {
+        if( !DoingAnyRegionNow )
+        {
+            Debug.LogError("Called CachedGUI.End() without matching CachedGUI.Begin().");
+            return;
+        }
+
         if( debugMode )
             alpha *= (Mathf.Sin(Time.unscaledTime * 8f) + 1f) / 2f * 0.7f + 0.2f;
 
-        var elem = stack[stack.Count - 1];
-        stack.RemoveAt(stack.Count - 1);
+        var elem = currentStack[currentStack.Count - 1];
+        currentStack.RemoveAt(currentStack.Count - 1);
 
         bool usedRenderTexture = elem.Item2;
-        var part = elem.Item1;
+        var region = elem.Item1;
 
+        // end render texture if used
         if( usedRenderTexture )
         {
             repaintOffset = Vector2.zero;
             EndRenderTexture();
         }
-            
+        
         if( Event.current.type == EventType.Repaint && alpha > 0f )
         {
             if( GUI.color != Color.white )
@@ -197,80 +233,95 @@ public static class CachedGUI
                 GUI.color = Color.white;
             }
 
+            // debug background
             if( debugMode )
             {
                 var oldCol = GUI.backgroundColor;
                 GUI.backgroundColor = Color.red;
-                GUI.Box(part.rect, GUIContent.none, DebugRectStyle);
+                GUI.Box(region.rect, GUIContent.none, DebugRectStyle);
                 GUI.backgroundColor = oldCol;
             }
 
             // draw result
-            var rect = new Rect(part.rect.x,
-                part.rect.y,
-                part.renderTexture.width / uiScale,
-                part.renderTexture.height / uiScale);
+            var rect = new Rect(region.rect.x,
+                region.rect.y,
+                region.renderTexture.width / uiScale,
+                region.renderTexture.height / uiScale);
 
             if( alpha < 1f )
                 GUI.color = new Color(1f, 1f, 1f, alpha);
 
-            GUI.DrawTexture(rect, part.renderTexture);
+            GUI.DrawTexture(rect, region.renderTexture);
             
             if( alpha < 1f )
                 GUI.color = Color.white;
 
+            // debug content
             if( debugMode )
-                GUI.Label(part.rect, "ID: " + part.ID + " Redrawn: " + part.timesRedrawn);
+                GUI.Label(region.rect, "ID: " + region.ID + " Redrawn: " + region.timesRedrawn + " Events: " + region.timesNonRepaintEventEntered);
         }
 
         // in case someone doesn't call OnGUI() each frame
-        if( Time.frameCount % 3 == 1 && autoCheckDestroyOldPartsFrame != Time.frameCount )
+        if( Time.frameCount % 7 == 1 && autoCheckDestroyOldRegionsFrame != Time.frameCount )
         {
-            autoCheckDestroyOldPartsFrame = Time.frameCount;
-            CheckDestroyOldParts();
+            autoCheckDestroyOldRegionsFrame = Time.frameCount;
+            CheckDestroyOldRegions();
             CheckRemoveOldDirtyIfChanged();
         }
     }
 
+    /// <summary>
+    /// Marks this region for redraw.
+    /// </summary>
     public static void SetDirty(int ID)
     {
-        for( int i = 0; i < cachedParts.Count; i++ )
+        for( int i = 0, count = cachedRegions.Count; i < count; i++ )
         {
-            if( cachedParts[i].ID == ID )
+            if( cachedRegions[i].ID == ID )
             {
-                var part = cachedParts[i];
-                part.dirty = true;
-                cachedParts[i] = part;
+                var region = cachedRegions[i];
+                region.dirty = true;
+                cachedRegions[i] = region;
                 return;
             }
         }
     }
 
+    /// <summary>
+    /// Marks all regions as dirty.
+    /// </summary>
     public static void SetAllDirty()
     {
-        for( int i = 0; i < cachedParts.Count; i++ )
+        for( int i = 0, count = cachedRegions.Count; i < count; i++ )
         {
-            var part = cachedParts[i];
-            part.dirty = true;
-            cachedParts[i] = part;
+            var region = cachedRegions[i];
+            region.dirty = true;
+            cachedRegions[i] = region;
         }
     }
 
+    /// <summary>
+    /// Destroys all render textures.
+    /// </summary>
     public static void Clear()
     {
-        for( int i = cachedParts.Count - 1; i >= 0; i-- )
+        for( int i = cachedRegions.Count - 1; i >= 0; i-- )
         {
-            RenderTexture.Destroy(cachedParts[i].renderTexture);
-            cachedParts.RemoveAt(i);
+            RenderTexture.Destroy(cachedRegions[i].renderTexture);
+            cachedRegions.RemoveAt(i);
         }
     }
 
+    /// <summary>
+    /// Must be called each frame.
+    /// </summary>
     public static void OnGUI()
     {
-        if( stack.Count != 0 )
+        // error recovery
+        if( currentStack.Count != 0 )
         {
             Debug.LogError("CachedGUI stack is not empty. Clearing.");
-            stack.Clear();
+            currentStack.Clear();
             RenderTexture.active = null;
         }
 
@@ -280,19 +331,24 @@ public static class CachedGUI
             mousePosStack.Clear();
         }
 
-        CheckDestroyOldParts();
+        CheckDestroyOldRegions();
         CheckRemoveOldDirtyIfChanged();
     }
 
+    /// <summary>
+    /// Sets currently drawn region as dirty.
+    /// </summary>
     public static void DirtyCurrent()
     {
-        if( stack.Count == 0 )
+        if( currentStack.Count == 0 )
             return;
 
-        SetDirty(stack[stack.Count - 1].Item3);
+        SetDirty(currentStack[currentStack.Count - 1].Item3);
     }
 
-    // must be called after every GUI.EndGroup() and alike
+    /// <summary>
+    /// Must be called after every GUI.EndGroup() and alike.
+    /// </summary>
     public static void SetCorrectMousePosition()
     {
         if( mousePosStack.Count == 0 )
@@ -321,13 +377,13 @@ public static class CachedGUI
     
     public static void DirtyCurrentIfChanged(object obj, string name)
     {
-        if( stack.Count == 0 )
+        if( currentStack.Count == 0 )
             return;
 
-        DirtyIfChanged(stack[stack.Count - 1].Item3, obj, name);
+        DirtyIfChanged(currentStack[currentStack.Count - 1].Item3, obj, name);
     }
 
-    // to avoid boxing
+    // overloads to avoid boxing
     public static void DirtyIfChanged(int ID, int value, string name)
     {
         if( dirtyIfChanged_int.TryGetValue((ID, name), out var prev) )
@@ -346,13 +402,13 @@ public static class CachedGUI
 
     public static void DirtyCurrentIfChanged(int value, string name)
     {
-        if( stack.Count == 0 )
+        if( currentStack.Count == 0 )
             return;
 
-        DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
+        DirtyIfChanged(currentStack[currentStack.Count - 1].Item3, value, name);
     }
 
-    // to avoid boxing
+    // overloads to avoid boxing
     public static void DirtyIfChanged(int ID, bool value, string name)
     {
         if( dirtyIfChanged_bool.TryGetValue((ID, name), out var prev) )
@@ -371,13 +427,13 @@ public static class CachedGUI
 
     public static void DirtyCurrentIfChanged(bool value, string name)
     {
-        if( stack.Count == 0 )
+        if( currentStack.Count == 0 )
             return;
 
-        DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
+        DirtyIfChanged(currentStack[currentStack.Count - 1].Item3, value, name);
     }
 
-    // to avoid boxing
+    // overloads to avoid boxing
     public static void DirtyIfChanged(int ID, float value, string name)
     {
         if( dirtyIfChanged_float.TryGetValue((ID, name), out var prev) )
@@ -396,13 +452,37 @@ public static class CachedGUI
 
     public static void DirtyCurrentIfChanged(float value, string name)
     {
-        if( stack.Count == 0 )
+        if( currentStack.Count == 0 )
             return;
 
-        DirtyIfChanged(stack[stack.Count - 1].Item3, value, name);
+        DirtyIfChanged(currentStack[currentStack.Count - 1].Item3, value, name);
     }
 
-    private static void CheckDirtyFromEvent(Rect rect, int ID, AutoDirtyMode autoDirtyMode)
+    private static int FindOrCreateRegion(Rect rect, int ID, bool canCreate = true)
+    {
+        for( int i = 0, count = cachedRegions.Count; i < count; i++ )
+        {
+            if( cachedRegions[i].ID == ID )
+                return i;
+        }
+
+        if( canCreate )
+        {
+            // add new entry
+            cachedRegions.Add(new CachedRegion { rect = rect,
+                lastUsedFrame = Time.frameCount,
+                ID = ID,
+                renderTexture = new RenderTexture(Mathf.CeilToInt(rect.width * uiScale), Mathf.CeilToInt(rect.height * uiScale), 0),
+                dirty = true,
+                lastFrameDirtiedFromMouse = -1 });
+
+            return cachedRegions.Count - 1;
+        }
+        else
+            return -1;
+    }
+
+    private static void CheckAutoDirtyFromEvent(Rect rect, int ID, AutoDirtyMode autoDirtyMode)
     {
         if( autoDirtyMode == AutoDirtyMode.Disabled )
             return;
@@ -410,16 +490,16 @@ public static class CachedGUI
         // if held mouse button inside and no longer holding (even if no longer inside the rect)
         if( Event.current.type == EventType.MouseUp )
         {
-            for( int i = 0; i < cachedParts.Count; i++ )
+            for( int i = 0, count = cachedRegions.Count; i < count; i++ )
             {
-                if( cachedParts[i].ID == ID )
+                if( cachedRegions[i].ID == ID )
                 {
-                    if( cachedParts[i].holdingMouseDown )
+                    if( cachedRegions[i].holdingMouseDown )
                     {
-                        var part = cachedParts[i];
-                        part.holdingMouseDown = false;
-                        part.dirty = true;
-                        cachedParts[i] = part;
+                        var region = cachedRegions[i];
+                        region.holdingMouseDown = false;
+                        region.dirty = true;
+                        cachedRegions[i] = region;
                         return;
                     }
 
@@ -431,15 +511,15 @@ public static class CachedGUI
         if( (autoDirtyMode == AutoDirtyMode.InteractionAndMouseMove || autoDirtyMode == AutoDirtyMode.Hovering)
             && Event.current.type == EventType.MouseDrag )
         {
-            for( int i = 0; i < cachedParts.Count; i++ )
+            for( int i = 0, count = cachedRegions.Count; i < count; i++ )
             {
-                if( cachedParts[i].ID == ID )
+                if( cachedRegions[i].ID == ID )
                 {
-                    if( cachedParts[i].holdingMouseDown )
+                    if( cachedRegions[i].holdingMouseDown )
                     {
-                        var part = cachedParts[i];
-                        part.dirty = true;
-                        cachedParts[i] = part;
+                        var region = cachedRegions[i];
+                        region.dirty = true;
+                        cachedRegions[i] = region;
                         return;
                     }
 
@@ -456,14 +536,14 @@ public static class CachedGUI
         // hover
         if( autoDirtyMode == AutoDirtyMode.Hovering )
         {
-            for( int i = 0; i < cachedParts.Count; i++ )
+            for( int i = 0, count = cachedRegions.Count; i < count; i++ )
             {
-                if( cachedParts[i].ID == ID )
+                if( cachedRegions[i].ID == ID )
                 {
-                    var part = cachedParts[i];
-                    part.lastFrameDirtiedFromMouse = Time.frameCount;
-                    part.dirty = true;
-                    cachedParts[i] = part;
+                    var region = cachedRegions[i];
+                    region.lastFrameDirtiedFromMouse = Time.frameCount;
+                    region.dirty = true;
+                    cachedRegions[i] = region;
                     return;
                 }
             }
@@ -478,13 +558,13 @@ public static class CachedGUI
             if( Event.current.type == EventType.MouseDown )
             {
                 // set holding mouse down flag
-                for( int i = 0; i < cachedParts.Count; i++ )
+                for( int i = 0, count = cachedRegions.Count; i < count; i++ )
                 {
-                    if( cachedParts[i].ID == ID )
+                    if( cachedRegions[i].ID == ID )
                     {
-                        var part = cachedParts[i];
-                        part.holdingMouseDown = true;
-                        cachedParts[i] = part;
+                        var region = cachedRegions[i];
+                        region.holdingMouseDown = true;
+                        cachedRegions[i] = region;
                         break;
                     }
                 }
@@ -497,19 +577,19 @@ public static class CachedGUI
         // mouse move
         if( autoDirtyMode == AutoDirtyMode.InteractionAndMouseMove )
         {
-            for( int i = 0; i < cachedParts.Count; i++ )
+            for( int i = 0, count = cachedRegions.Count; i < count; i++ )
             {
-                if( cachedParts[i].ID == ID )
+                if( cachedRegions[i].ID == ID )
                 {
                     if( Event.current.type == EventType.MouseMove
                         || Event.current.type == EventType.MouseDrag
-                        || ((Event.current.type == EventType.Repaint || Event.current.type == EventType.Layout) && Event.current.mousePosition != cachedParts[i].lastKnownMousePos) )
+                        || ((Event.current.type == EventType.Repaint || Event.current.type == EventType.Layout) && Event.current.mousePosition != cachedRegions[i].lastKnownMousePos) )
                     {
-                        var part = cachedParts[i];
-                        part.lastFrameDirtiedFromMouse = Time.frameCount;
-                        part.dirty = true;
-                        part.lastKnownMousePos = Event.current.mousePosition;
-                        cachedParts[i] = part;
+                        var region = cachedRegions[i];
+                        region.lastFrameDirtiedFromMouse = Time.frameCount;
+                        region.dirty = true;
+                        region.lastKnownMousePos = Event.current.mousePosition;
+                        cachedRegions[i] = region;
                         return;
                     }
 
@@ -519,14 +599,14 @@ public static class CachedGUI
         }
     }
 
-    private static void CheckDestroyOldParts()
+    private static void CheckDestroyOldRegions()
     {
-        for( int i = cachedParts.Count - 1; i >= 0; i-- )
+        for( int i = cachedRegions.Count - 1; i >= 0; i-- )
         {
-            if( Time.frameCount - cachedParts[i].lastUsedFrame > 60 )
+            if( Time.frameCount - cachedRegions[i].lastUsedFrame > 60 )
             {
-                RenderTexture.Destroy(cachedParts[i].renderTexture);
-                cachedParts.RemoveAt(i);
+                RenderTexture.Destroy(cachedRegions[i].renderTexture);
+                cachedRegions.RemoveAt(i);
             }
         }
     }
