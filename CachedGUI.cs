@@ -341,7 +341,7 @@ public static class CachedGUI
             // get current UI scale from GUI.matrix
             float scale = GUI.matrix.GetColumn(0).magnitude;
 
-            if( scale != clearIfUIScaleChanges )
+            if( Mathf.Abs(scale - clearIfUIScaleChanges) > 0.002f )
             {
                 clearIfUIScaleChanges = scale;
                 Clear();
